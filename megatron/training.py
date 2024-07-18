@@ -58,6 +58,43 @@ def print_datetime(string):
     time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print_rank_0('[' + string + '] datetime: {} '.format(time_str))
 
+def num_floating_point_operations(args, batch_size, causal=False):
+    # Attention projection size.
+    query_projection_size = args.kv_channels * args.num_attention_heads
+    query_projection_to_hidden_size_ratio = query_projection_size / args.hidden_size
+    # Group Query Attention.
+    if not args.group_query_attention:
+        args.num_query_groups = args.num_attention_heads
+    # MoE.
+    num_experts_routed_to = 1 if args.num_experts is None else args.moe_router_topk
+    gated_linear_multiplier = 3 / 2 if args.swiglu else 1
+    return (
+        12
+        * batch_size
+        * args.seq_length
+        * args.num_layers
+        * args.hidden_size
+        * args.hidden_size
+        * (
+            # Attention.
+            (
+                (
+                    1
+                    + (args.num_query_groups / args.num_attention_heads)
+                    + (args.seq_length / args.hidden_size) // (2 if causal else 1)
+                ) * query_projection_to_hidden_size_ratio
+            )
+            # MLP.
+            + (
+                (args.ffn_hidden_size / args.hidden_size)
+                * num_experts_routed_to
+                * gated_linear_multiplier
+            )
+            # Logit.
+            + (args.padded_vocab_size / (2 * args.num_layers * args.hidden_size))
+        )
+    )
+
 
 def pretrain(train_valid_test_dataset_provider,
              model_provider,
@@ -665,8 +702,15 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
     if iteration % args.log_interval == 0:
         # timers._log_option = 'all'
         # timers.log(timers_to_log, normalizer=total_iterations)
-        elapsed_time = timers('interval-time').elapsed(barrier=False)
-        elapsed_time_per_iteration = elapsed_time / total_iterations
+        elapsed_time = timers('interval-time').elapsed(barrier=False, reset=True)
+        elapsed_time_per_iteration = elapsed_time / args.log_interval
+
+        # statistics during the last log interval: mfu and tgs 
+        peak_tflops_a100 = 312
+        mfu = num_floating_point_operations(args, batch_size, causal=False) / (
+            peak_tflops_a100 * elapsed_time_per_iteration * 10**12 * args.world_size) * 100
+        tgs = batch_size * args.seq_length / elapsed_time_per_iteration
+
         if writer:
             if args.log_timers_to_tensorboard:
                 writer.add_scalar('iteration-time',
@@ -676,12 +720,14 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
                                      elapsed_time_per_iteration}, iteration)
         log_string = ' iteration {:8d}/{:8d} |'.format(
             iteration, args.train_iters)
-        log_string += ' consumed samples: {:12d} |'.format(
+        log_string += ' consumed samples: {:8d} |'.format(
             args.consumed_train_samples)
         log_string += ' elapsed time per iteration (ms): {:.1f} |'.format(
             elapsed_time_per_iteration * 1000.0)
+        log_string += ' mfu: {:4.2f}% |'.format(mfu)
+        log_string += ' tgs: {:9.2f} |'.format(tgs)
         log_string += ' learning rate: {:.3E} |'.format(learning_rate)
-        log_string += ' global batch size: {:5d} |'.format(batch_size)
+        log_string += ' global batch size: {:3d} |'.format(batch_size)
         for key in total_loss_dict:
             if key not in [advanced_iters_key, skipped_iters_key,
                            nan_iters_key]:
@@ -701,10 +747,10 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
                 log_string += ' num zeros: {:.1f} |'.format(num_zeros_in_grad)
         if params_norm is not None:
             log_string += ' params norm: {:.3f} |'.format(params_norm)
-        log_string += ' number of skipped iterations: {:3d} |'.format(
-            total_loss_dict[skipped_iters_key])
-        log_string += ' number of nan iterations: {:3d} |'.format(
-            total_loss_dict[nan_iters_key])
+        # log_string += ' number of skipped iterations: {:3d} |'.format(
+        #     total_loss_dict[skipped_iters_key])
+        # log_string += ' number of nan iterations: {:3d} |'.format(
+        #     total_loss_dict[nan_iters_key])
         total_loss_dict[advanced_iters_key] = 0
         total_loss_dict[skipped_iters_key] = 0
         total_loss_dict[nan_iters_key] = 0

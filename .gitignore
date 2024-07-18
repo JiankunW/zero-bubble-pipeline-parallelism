@@ -9,3 +9,5 @@ logs
 .vscode
 *.log
 *.nsys-rep
+
+zb_sample_dataset/
