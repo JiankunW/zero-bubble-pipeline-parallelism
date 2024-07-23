@@ -142,7 +142,9 @@ def pretrain(train_valid_test_dataset_provider,
     # This will be closer to what scheduler will see (outside of
     # image ... launches.
     global _TRAIN_START_TIME
-    start_time_tensor = torch.cuda.DoubleTensor([_TRAIN_START_TIME])
+    start_time_tensor = torch.tensor([_TRAIN_START_TIME],
+                                     dtype=torch.double,
+                                     device='cuda')
     torch.distributed.all_reduce(start_time_tensor,
                                  op=torch.distributed.ReduceOp.MIN)
     _TRAIN_START_TIME = start_time_tensor.item()
@@ -726,27 +728,27 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
             elapsed_time_per_iteration * 1000.0)
         log_string += ' mfu: {:4.2f}% |'.format(mfu)
         log_string += ' tgs: {:9.2f} |'.format(tgs)
-        log_string += ' learning rate: {:.3E} |'.format(learning_rate)
+        # log_string += ' learning rate: {:.3E} |'.format(learning_rate)
         log_string += ' global batch size: {:3d} |'.format(batch_size)
-        for key in total_loss_dict:
-            if key not in [advanced_iters_key, skipped_iters_key,
-                           nan_iters_key]:
-                avg = total_loss_dict[key].item() / \
-                      float(max(1, total_loss_dict[advanced_iters_key]))
-                if avg > 0.0:
-                    log_string += ' {}: {:.6E} |'.format(key, avg)
-                total_loss_dict[key] = torch.cuda.FloatTensor([0.0])
-        log_string += ' loss scale: {:.1f} |'.format(loss_scale)
-        if grad_norm is not None:
-            log_string += ' grad norm: {:.3f} |'.format(grad_norm)
+        # for key in total_loss_dict:
+        #     if key not in [advanced_iters_key, skipped_iters_key,
+        #                    nan_iters_key]:
+        #         avg = total_loss_dict[key].item() / \
+        #               float(max(1, total_loss_dict[advanced_iters_key]))
+        #         if avg > 0.0:
+        #             log_string += ' {}: {:.6E} |'.format(key, avg)
+        #         total_loss_dict[key] = torch.cuda.FloatTensor([0.0])
+        # log_string += ' loss scale: {:.1f} |'.format(loss_scale)
+        # if grad_norm is not None:
+        #     log_string += ' grad norm: {:.3f} |'.format(grad_norm)
         if num_zeros_in_grad is not None:
             if args.enable_zero_bubble and args.enable_optimizer_post_validation:
                 log_string += ' optimizer rollback: {:.1f} |'.format(num_zeros_in_grad)
                 # Here num_zeros_in_grad is a fake name, representing for optimizer_rollback
             else:
                 log_string += ' num zeros: {:.1f} |'.format(num_zeros_in_grad)
-        if params_norm is not None:
-            log_string += ' params norm: {:.3f} |'.format(params_norm)
+        # if params_norm is not None:
+        #     log_string += ' params norm: {:.3f} |'.format(params_norm)
         # log_string += ' number of skipped iterations: {:3d} |'.format(
         #     total_loss_dict[skipped_iters_key])
         # log_string += ' number of nan iterations: {:3d} |'.format(
