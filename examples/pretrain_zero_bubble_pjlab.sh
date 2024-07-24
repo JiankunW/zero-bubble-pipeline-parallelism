@@ -1,13 +1,8 @@
 #!/bin/bash
 
-
-# SBATCH -p Intern5 --nodes=1 --gres=gpu:8 --exclusive --ntasks-per-node=1 --cpus-per-task=24 --job-name=megatron_gpt3_6.2b --output=%x_%j.log
-
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 
-DIR=`pwd`
 DATETIME=`date +'date_%y-%m-%d_time_%H-%M-%S'`
-mkdir -p $DIR/logs
 
 HOME_DIR="/mnt/petrelfs/jiaopenglong/jiankun/zero-bubble-pipeline-parallelism"
 DATASET="$HOME_DIR/zb_sample_dataset/dataset/c4_text_document"
@@ -18,11 +13,14 @@ if [ ! -e "$DATASET"".idx" ]; then
 fi
 
 # Running locally
-if [ -z "$WORLD_SIZE" ]; then
-  export WORLD_SIZE=1
-  export RANK=0
-  export MASTER_ADDR=localhost
-  export MASTER_PORT=10089
+if [ -z "$SLURM_JOB_NODELIST" ]; then
+  NNODES=1
+  NODE_RANK=0
+  MASTER_ADDR=localhost
+else
+  NNODES=$(wc -w <<< $(scontrol show hostnames "$SLURM_JOB_NODELIST"))
+  NODE_RANK=$SLURM_NODEID
+  MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
 fi
 
 if [ -z "$GPUS_PER_NODE" ]; then
@@ -33,7 +31,7 @@ if [ -z "$EXIT_INTERVAL" ]; then
   EXIT_INTERVAL=1000
 fi
 
-WORLD_SIZE_IN_GPUS=$(( $WORLD_SIZE * $GPUS_PER_NODE ))
+WORLD_SIZE_IN_GPUS=$(( $NNODES * $GPUS_PER_NODE ))
 
 if [ -z "$PIPELINE_SIZE" ]; then
   PIPELINE_SIZE=$(( $WORLD_SIZE_IN_GPUS))
@@ -97,10 +95,6 @@ options=" \
   --profile-ranks $profile_ranks \
   --allow-padding-num-layers"
 
-if [ -z "$FP32" ]; then
-  options="$options --fp16"
-fi
-
 if [ ! -z "$PROFILED" ]; then
   options="$options --profile"
 fi
@@ -115,9 +109,9 @@ if [ ! -z "$ENABLE_ZERO_BUBBLE" ]; then
   --zero-bubble-pipeline-timers-start-iter $ZERO_BUBBLE_TIMER_START \
   --zero-bubble-pipeline-timers-end-iter $ZERO_BUBBLE_TIMER_END \
   --zero-bubble-max-pending-backward $ZERO_BUBBLE_MEM_LIMIT"
-  if [ -z "$FP32" ]; then
-    options="$options --enable-optimizer-post-validation"
-  fi
+  # if [ -z "$FP32" ]; then
+  #   options="$options --enable-optimizer-post-validation"
+  # fi
 fi
 
 if [ ! -z "$ENABLE_EXACTLY_NUMERIC_MATCH" ]; then
@@ -130,11 +124,11 @@ if [ ! -z "$INTERLEAVED_1F1B" ]; then
   options="$options --num-layers-per-virtual-pipeline-stage 1"
 fi
 
-run_cmd="torchrun --nnodes $WORLD_SIZE \
-  --node_rank $RANK \
+run_cmd="torchrun --nnodes $NNODES \
+  --node_rank $NODE_RANK \
   --master_addr $MASTER_ADDR \
   --master_port $MASTER_PORT \
-  --nproc_per_node=$GPUS_PER_NODE ${DIR}/pretrain_gpt.py $@ ${options}"
+  --nproc_per_node=$GPUS_PER_NODE pretrain_gpt.py $@ ${options}"
 
 if [ ! -z "$PROFILED" ]; then
   run_cmd="nsys profile -s none -t nvtx,cuda \
@@ -147,8 +141,6 @@ fi
 
 echo $run_cmd
 # sleep 100000
-srun -p llm_s --nodes=1 --gres=gpu:8 --exclusive --ntasks-per-node=1 --cpus-per-task=24 \
- --job-name=zb_6.2b_1f1b \
- --output=$DIR/logs/%x_%j_$DATETIME.log $run_cmd &
+eval $run_cmd 2>&1 | tee $JOB_DIR/$DATETIME.log
 
 set +x

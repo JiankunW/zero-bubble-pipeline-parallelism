@@ -1,0 +1,9 @@
+# GPT-3-like model: Page 6, https://arxiv.org/pdf/2401.10241.pdf
+
+export PIPELINE_SIZE=24
+export LAYERS=46
+export MICRO_BATCH_SIZE=1
+export NUM_MICRO_BATCH=$(( 3 * $PIPELINE_SIZE ))  # 48/64/128
+export GLOBAL_BATCH_SIZE=$(( $NUM_MICRO_BATCH * $MICRO_BATCH_SIZE ))  # 48/64/128
+export HIDDEN_SIZE=6144
+export ATTENTION_HEADS=48
